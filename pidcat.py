@@ -58,7 +58,6 @@ try:
 except:
   pass
 
-
 BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = range(8)
 
 RESET = '\033[0m'
@@ -143,8 +142,6 @@ LOG_LINE  = re.compile(r'^([A-Z])/([^\(]+)\( *(\d+)\): (.*)$')
 BUG_LINE  = re.compile(r'^(?!.*(nativeGetEnabledTags)).*$')
 
 pids = set()
-last_tag = None
-
 def match_packages(token):
   index = token.find(':')
   return (token in args.package) if index == -1 else (token[:index] in args.package)
@@ -171,13 +168,13 @@ def parse_death(tag, message):
 
 def logcat(device_id=""):
   adb_command = ['adb']
-  if args.device_serial:
+  if device_id:
     adb_command.extend(['-s', device_id])
   adb_command.append('logcat')
 
   adb = subprocess.Popen(adb_command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-
-  last_tag = None  
+  
+  last_tag = None
   while adb.poll() is None:
     try:
       line = adb.stdout.readline().decode('utf-8').strip()
@@ -187,7 +184,7 @@ def logcat(device_id=""):
       break
 
     bug_line = BUG_LINE.match(line)
-    if bug_line is None:
+    if bug_line is not None:
       continue
 
     log_line = LOG_LINE.match(line)
@@ -255,32 +252,30 @@ def logcat(device_id=""):
       message = matcher.sub(replace, message)
 
     linebuf += indent_wrap(message)
-    print(linebuf.encode('ascii','ignore'))
+    print(linebuf)
 
-
+re_device = re.compile("^(.*)\tdevice$",re.MULTILINE)
 def check_for_device_and_start():
+  os.popen("adb start-server")
   choosen_device = ""
-  devices = []
+  raw_devices = []
   retries = 100
   while retries > 0:
     res = os.popen('adb devices').read()
-    raw_devices = res.splitlines()[1:-1]
-    if raw_devices:
-      if choosen_device in devices:
+    raw_devices = re_device.findall(res)
+    if 'List of devices attached' in res and len(raw_devices) > 0:
+      if choosen_device in raw_devices:
         print "\nOutputing logcat for device: " + choosen_device + "\n"
         logcat(choosen_device)
         choosen_device = ""
       else:
-        print "\nAvailable devices:"
-        devices = map(lambda d: str(re.compile("(\s)").split(d)[0]), raw_devices)
-        if not devices:
-          break
-        for i, d in enumerate(devices):
-          res = os.popen('adb -s ' + d + ' shell cat /system/build.prop | grep "ro.product.model"').read()
-          if res:
-            print str(i+1) + ": " + str(d) + " - " + res.split("=")[1].strip()
-          else:
-            print str(i+1) + ": " + str(d)
+        print "\nList of devices attached:"
+        for i, d in enumerate(raw_devices):
+          # res = os.popen('adb -s ' + d + ' shell cat /system/build.prop | grep "ro.product.model"').read()
+          # if res:
+          #   print str(i+1) + ": " + str(d) + " - " + res.split("=")[1].strip()
+          # else:
+          print str(i+1) + ": " + str(d)
 
         while True:
           try:
@@ -290,8 +285,8 @@ def check_for_device_and_start():
 
           if re.compile("\d").match(choice):
             #is number
-            if (int(choice) -1) < len(devices):
-              choosen_device = devices[int(choice) -1]
+            if (int(choice) -1) < len(raw_devices):
+              choosen_device = raw_devices[int(choice) -1]
               break
 
         
