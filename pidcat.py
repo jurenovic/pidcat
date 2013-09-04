@@ -177,12 +177,11 @@ def logcat(device_id=""):
   last_tag = None
   while adb.poll() is None:
     try:
-      line = adb.stdout.readline().decode('utf-8').strip()
+      line = adb.stdout.readline().decode('utf-8', 'replace').strip()
     except KeyboardInterrupt:
       break
     if len(line) == 0:
       break
-
     bug_line = BUG_LINE.match(line)
     if bug_line is not None:
       continue
@@ -191,6 +190,7 @@ def logcat(device_id=""):
     if log_line is None:
       continue
 
+    print(line.encode('UTF-8', 'ignore'))
     level, tag, owner, message = log_line.groups()
 
     start = PID_START.match(message)
@@ -206,7 +206,7 @@ def logcat(device_id=""):
         linebuf += colorize(' ' * (header_size - 1), bg=WHITE)
         linebuf += ' PID: %s   UID: %s   GIDs: %s' % (line_pid, line_uid, line_gids)
         linebuf += '\n'
-        print(linebuf)
+        print(linebuf.encode('UTF-8', 'ignore'))
         last_tag = None # Ensure next log gets a tag printed
 
     dead_pid = parse_death(tag, message)
@@ -216,7 +216,7 @@ def logcat(device_id=""):
       linebuf += colorize(' ' * (header_size - 1), bg=RED)
       linebuf += ' Process %s ended' % dead_pid
       linebuf += '\n'
-      print(linebuf)
+      print(linebuf.encode('UTF-8', 'ignore'))
       last_tag = None # Ensure next log gets a tag printed
 
     if owner not in pids:
@@ -252,7 +252,7 @@ def logcat(device_id=""):
       message = matcher.sub(replace, message)
 
     linebuf += indent_wrap(message)
-    print(linebuf)
+    print(linebuf.encode('UTF-8', 'ignore'))
 
 re_device = re.compile("^(.*)\tdevice$",re.MULTILINE)
 def check_for_device_and_start():
