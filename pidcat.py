@@ -32,7 +32,7 @@ import datetime
 import time
 
 
-LOG_LEVELS = ['V','D','I','W','E']
+LOG_LEVELS = 'VDIWEF'
 LOG_LEVELS_MAP = dict([(LOG_LEVELS[i], i) for i in range(len(LOG_LEVELS))])
 parser = argparse.ArgumentParser(description='Filter logcat by package name')
 parser.add_argument('package', nargs='+', help='Application package name(s)')
@@ -74,6 +74,7 @@ def colorize(message, fg=None, bg=None):
 def indent_wrap(message):
   if width == -1:
     return message
+  message = message.replace('\t', '    ')
   wrap_area = width - header_size
   messagebuf = ''
   current = 0
@@ -138,8 +139,8 @@ PID_START = re.compile(r'^Start proc ([a-zA-Z0-9._:]+) for ([a-z]+ [^:]+): pid=(
 PID_KILL  = re.compile(r'^Killing (\d+):([a-zA-Z0-9._]+)/[^:]+: (.*)$')
 PID_LEAVE = re.compile(r'^No longer want ([a-zA-Z0-9._]+) \(pid (\d+)\): .*$')
 PID_DEATH = re.compile(r'^Process ([a-zA-Z0-9._]+) \(pid (\d+)\) has died.?$')
-LOG_LINE  = re.compile(r'^([A-Z])/([^\(]+)\( *(\d+)\): (.*)$')
-BUG_LINE  = re.compile(r'^(?!.*(nativeGetEnabledTags)).*$')
+LOG_LINE  = re.compile(r'^([A-Z])/(.+?)\( *(\d+)\): (.*?)$')
+BUG_LINE  = re.compile(r'.*nativeGetEnabledTags.*')
 
 pids = set()
 def match_packages(token):
@@ -190,7 +191,6 @@ def logcat(device_id=""):
     if log_line is None:
       continue
 
-    print(line.encode('UTF-8', 'ignore'))
     level, tag, owner, message = log_line.groups()
 
     start = PID_START.match(message)
