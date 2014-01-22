@@ -48,15 +48,17 @@ min_level = LOG_LEVELS_MAP[args.min_level]
 header_size = args.tag_width + 1 + 3 + 1 # space, level, space
 if args.timestamp:
   # timestamp width
-  header_size += 17
+  header_size += 16
 
 width = -1
-try:
-  # Get the current terminal width
-  import fcntl, termios, struct
-  h, width = struct.unpack('hh', fcntl.ioctl(0, termios.TIOCGWINSZ, struct.pack('hh', 0, 0)))
-except:
-  pass
+def get_terminal_size():
+  global width
+  try:
+    # Get the current terminal width
+    import fcntl, termios, struct
+    h, width = struct.unpack('hh', fcntl.ioctl(0, termios.TIOCGWINSZ, struct.pack('hh', 0, 0)))
+  except:
+    pass
 
 BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = range(8)
 
@@ -168,6 +170,7 @@ def parse_death(tag, message):
   return None
 
 def logcat(device_id=""):
+  get_terminal_size()
   adb_command = ['adb']
   if device_id:
     adb_command.extend(['-s', device_id])
@@ -256,7 +259,6 @@ def logcat(device_id=""):
 
 re_device = re.compile("^(.*)\tdevice$",re.MULTILINE)
 def check_for_device_and_start():
-  os.popen("adb start-server")
   choosen_device = ""
   raw_devices = []
   retries = 100
