@@ -40,7 +40,8 @@ parser.add_argument('-l', '--min-level', dest='min_level', type=str, choices=LOG
 parser.add_argument('--color-gc', dest='color_gc', action='store_true', help='Color garbage collection')
 parser.add_argument('--always-display-tags', dest='always_tags', action='store_true',help='Always display the tag name')
 parser.add_argument('-s', '--serial', dest='device_serial', help='Device serial number (adb -s option)')
-parser.add_argument('-t', '--timestamp', action='store_true', help='Display timestamps')
+parser.add_argument('-t', '--timestamp', dest='timestamp', action='store_true', default=True, help='Remove timestamps')
+parser.add_argument('-iw', '--indent_wrap', dest='indent_wrap', action='store_true', help='Indent wrap messages')
 
 args = parser.parse_args()
 min_level = LOG_LEVELS_MAP[args.min_level]
@@ -74,6 +75,8 @@ def colorize(message, fg=None, bg=None):
   return termcolor(fg, bg) + message + RESET
 
 def indent_wrap(message):
+  if not args.indent_wrap:
+    return message
   if width == -1:
     return message
   message = message.replace('\t', '    ')
