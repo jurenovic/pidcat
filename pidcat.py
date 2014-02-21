@@ -1,26 +1,25 @@
-#!/usr/bin/python
-# -*- coding: utf-8 -*-
+#!/usr/bin/python -u
 
 '''
 Copyright 2009, The Android Open Source Project
 
-Licensed under the Apache License, Version 2.0 (the "License"); 
-you may not use this file except in compliance with the License. 
-You may obtain a copy of the License at 
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-  http://www.apache.org/licenses/LICENSE-2.0 
+  http://www.apache.org/licenses/LICENSE-2.0
 
-Unless required by applicable law or agreed to in writing, software 
-distributed under the License is distributed on an "AS IS" BASIS, 
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
-See the License for the specific language governing permissions and 
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
 limitations under the License.
 '''
 
 # Script to highlight adb logcat output for console
-# Written by Jeff Sharkey, http://jsharkey.org/
+# Originally written by Jeff Sharkey, http://jsharkey.org/
 # Piping detection and popen() added by other Android team members
-# Package name restriction by Jake Wharton, http://jakewharton.com
+# Package filtering and output improvements by Jake Wharton, http://jakewharton.com
 
 import argparse
 import os
@@ -35,10 +34,11 @@ import time
 LOG_LEVELS = 'VDIWEF'
 LOG_LEVELS_MAP = dict([(LOG_LEVELS[i], i) for i in range(len(LOG_LEVELS))])
 parser = argparse.ArgumentParser(description='Filter logcat by package name')
-parser.add_argument('package', nargs='+', help='Application package name(s)')
+parser.add_argument('package', nargs='*', help='Application package name(s)')
 parser.add_argument('-w', '--tag-width', metavar='N', dest='tag_width', type=int, default=22, help='Width of log tag')
 parser.add_argument('-l', '--min-level', dest='min_level', type=str, choices=LOG_LEVELS, default='V', help='Minimum level to be displayed')
 parser.add_argument('--color-gc', dest='color_gc', action='store_true', help='Color garbage collection')
+parser.add_argument('--always-display-tags', dest='always_tags', action='store_true',help='Always display the tag name')
 parser.add_argument('-s', '--serial', dest='device_serial', help='Device serial number (adb -s option)')
 parser.add_argument('-t', '--timestamp', action='store_true', help='Display timestamps')
 
@@ -99,6 +99,7 @@ KNOWN_TAGS = {
   'AndroidRuntime': CYAN,
   'jdwp': WHITE,
   'StrictMode': WHITE,
+  'DEBUG': YELLOW,
 }
 
 def allocate_color(tag):
@@ -143,6 +144,7 @@ PID_LEAVE = re.compile(r'^No longer want ([a-zA-Z0-9._]+) \(pid (\d+)\): .*$')
 PID_DEATH = re.compile(r'^Process ([a-zA-Z0-9._]+) \(pid (\d+)\) has died.?$')
 LOG_LINE  = re.compile(r'^([A-Z])/(.+?)\( *(\d+)\): (.*?)$')
 BUG_LINE  = re.compile(r'.*nativeGetEnabledTags.*')
+BACKTRACE_LINE = re.compile(r'^#(.*?)pc\s(.*?)$')
 
 pids = set()
 def match_packages(token):
@@ -215,6 +217,8 @@ def logcat(device_id=""):
     dead_pid = parse_death(tag, message)
     if dead_pid:
       pids.remove(dead_pid)
+      app_pid = line_pid
+
       linebuf  = '\n'
       linebuf += colorize(' ' * (header_size - 1), bg=RED)
       linebuf += ' Process %s ended' % dead_pid
@@ -225,6 +229,18 @@ def logcat(device_id=""):
     if owner not in pids:
       continue
     if LOG_LEVELS_MAP[level] < min_level:
+      continue
+    
+    # Make sure the backtrace is printed after a native crash
+    if tag.strip() == 'DEBUG':
+      bt_line = BACKTRACE_LINE.match(message.lstrip())
+      if bt_line is not None:
+        message = message.lstrip()
+        owner = app_pid
+    
+    if owner not in pids:
+      continue
+    if level in LOG_LEVELS_MAP and LOG_LEVELS_MAP[level] < min_level:
       continue
 
     linebuf = ''
@@ -244,15 +260,16 @@ def logcat(device_id=""):
       linebuf += ' ' * args.tag_width
     linebuf += ' '
 
-    # write out level colored edge
-    if level not in TAGTYPES: break
-    linebuf += TAGTYPES[level]
-    linebuf += ' '
-
     # format tag message using rules
     for matcher in RULES:
       replace = RULES[matcher]
       message = matcher.sub(replace, message)
+    # write out level colored edge
+    if level in TAGTYPES:
+      linebuf += TAGTYPES[level]
+    else:
+      linebuf += ' ' + level + ' '
+    linebuf += ' '
 
     linebuf += indent_wrap(message)
     print(linebuf.encode('UTF-8', 'ignore'))
