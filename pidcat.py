@@ -283,40 +283,46 @@ def check_for_device_and_start():
   raw_devices = []
   retries = 100
   while retries > 0:
-    res = os.popen('adb devices').read()
-    raw_devices = re_device.findall(res)
-    if 'List of devices attached' in res and len(raw_devices) > 0:
-      if choosen_device in raw_devices:
-        print "\nOutputing logcat for device: " + choosen_device + "\n"
-        logcat(choosen_device)
-        choosen_device = ""
+    try:
+      res = os.popen('adb devices').read()
+      raw_devices = re_device.findall(res)
+      if 'List of devices attached' in res and len(raw_devices) > 0:
+        if choosen_device in raw_devices:
+          print "\nOutputing logcat for device: " + choosen_device + "\n"
+          logcat(choosen_device)
+          choosen_device = ""
+        else:
+          if len(raw_devices) == 1:
+            choosen_device = raw_devices[0]
+            continue
+          print "\nList of devices attached:"
+          for i, d in enumerate(raw_devices):
+            # res = os.popen('adb -s ' + d + ' shell cat /system/build.prop | grep "ro.product.model"').read()
+            # if res:
+            #   print str(i+1) + ": " + str(d) + " - " + res.split("=")[1].strip()
+            # else:
+            print str(i+1) + ": " + str(d)
+
+          while True:
+            try:
+              choice = raw_input("\nPlease select the device: ")
+            except KeyboardInterrupt:
+              sys.exit()
+
+            if re.compile("\d").match(choice):
+              #is number
+              if (int(choice) -1) < len(raw_devices):
+                choosen_device = raw_devices[int(choice) -1]
+                break
+
+          
       else:
-        print "\nList of devices attached:"
-        for i, d in enumerate(raw_devices):
-          # res = os.popen('adb -s ' + d + ' shell cat /system/build.prop | grep "ro.product.model"').read()
-          # if res:
-          #   print str(i+1) + ": " + str(d) + " - " + res.split("=")[1].strip()
-          # else:
-          print str(i+1) + ": " + str(d)
-
-        while True:
-          try:
-            choice = raw_input("\nPlease select the device: ")
-          except KeyboardInterrupt:
-            sys.exit()
-
-          if re.compile("\d").match(choice):
-            #is number
-            if (int(choice) -1) < len(raw_devices):
-              choosen_device = raw_devices[int(choice) -1]
-              break
-
-        
-    else:
-      print "\nCurrently no device is connected, will retry in few seconds"
-      time.sleep(5)
-      retries -= 1
-      continue
+        print "\nCurrently no device is connected, will retry in few seconds"
+        time.sleep(5)
+        retries -= 1
+        continue
+    except KeyboardInterrupt:
+      sys.exit()
   
 if __name__ == "__main__":
   check_for_device_and_start()
