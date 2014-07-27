@@ -292,9 +292,6 @@ def check_for_device_and_start():
           logcat(choosen_device)
           choosen_device = ""
         else:
-          if len(raw_devices) == 1:
-            choosen_device = raw_devices[0]
-            continue
           print "\nList of devices attached:"
           for i, d in enumerate(raw_devices):
             # res = os.popen('adb -s ' + d + ' shell cat /system/build.prop | grep "ro.product.model"').read()
