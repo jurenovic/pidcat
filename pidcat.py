@@ -22,10 +22,13 @@ limitations under the License.
 # Package filtering and output improvements by Jake Wharton, http://jakewharton.com
 
 import argparse
+import os
 import sys
 import re
 import subprocess
 from subprocess import PIPE
+import datetime
+import time
 
 __version__ = '2.0.0'
 
@@ -45,6 +48,8 @@ parser.add_argument('-c', '--clear', dest='clear_logcat', action='store_true', h
 parser.add_argument('-t', '--tag', dest='tag', action='append', help='Filter output by specified tag(s)')
 parser.add_argument('-i', '--ignore-tag', dest='ignored_tag', action='append', help='Filter output by ignoring specified tag(s)')
 parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + __version__, help='Print the version number and exit')
+parser.add_argument('-ts', '--timestamp', dest='timestamp', action='store_true', default=True, help='Remove timestamps')
+parser.add_argument('-iw', '--indent_wrap', dest='indent_wrap', action='store_true', help='Indent wrap messages')
 
 args = parser.parse_args()
 min_level = LOG_LEVELS_MAP[args.min_level.upper()]
@@ -64,14 +69,19 @@ named_processes = filter(lambda package: package.find(":") != -1, package)
 named_processes = map(lambda package: package if package.find(":") != len(package) - 1 else package[:-1], named_processes)
 
 header_size = args.tag_width + 1 + 3 + 1 # space, level, space
+if args.timestamp:
+  # timestamp width
+  header_size += 16
 
 width = -1
-try:
-  # Get the current terminal width
-  import fcntl, termios, struct
-  h, width = struct.unpack('hh', fcntl.ioctl(0, termios.TIOCGWINSZ, struct.pack('hh', 0, 0)))
-except:
-  pass
+def get_terminal_size():
+  global width
+  try:
+    # Get the current terminal width
+    import fcntl, termios, struct
+    h, width = struct.unpack('hh', fcntl.ioctl(0, termios.TIOCGWINSZ, struct.pack('hh', 0, 0)))
+  except:
+    pass
 
 BLACK, RED, GREEN, YELLOW, BLUE, MAGENTA, CYAN, WHITE = range(8)
 
@@ -87,6 +97,8 @@ def colorize(message, fg=None, bg=None):
   return termcolor(fg, bg) + message + RESET
 
 def indent_wrap(message):
+  if not args.indent_wrap:
+    return message
   if width == -1:
     return message
   message = message.replace('\t', '    ')
@@ -263,90 +275,153 @@ while ps_pid.poll() is None:
       seen_pids = True
       pids.add(pid)
 
-while adb.poll() is None:
-  try:
-    line = adb.stdout.readline().decode('utf-8', 'replace').strip()
-  except KeyboardInterrupt:
-    break
-  if len(line) == 0:
-    break
 
-  bug_line = BUG_LINE.match(line)
-  if bug_line is not None:
-    continue
+def logcat(device_id=""):
+  get_terminal_size()
+  adb_command = ['adb']
+  if device_id:
+    adb_command.extend(['-s', device_id])
+  adb_command.append('logcat')
 
-  log_line = LOG_LINE.match(line)
-  if log_line is None:
-    continue
+  adb = subprocess.Popen(adb_command, stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
-  level, tag, owner, message = log_line.groups()
-  tag = tag.strip()
-  start = parse_start_proc(line)
-  if start:
-    line_package, target, line_pid, line_uid, line_gids = start
-    if match_packages(line_package):
-      pids.add(line_pid)
+  last_tag = None
+  while adb.poll() is None:
+    try:
+      line = adb.stdout.readline().decode('utf-8', 'replace').strip()
+    except KeyboardInterrupt:
+      break
+    if len(line) == 0:
+      break
 
-      app_pid = line_pid
+    bug_line = BUG_LINE.match(line)
+    if bug_line is not None:
+      continue
 
+    log_line = LOG_LINE.match(line)
+    if log_line is None:
+      continue
+
+    level, tag, owner, message = log_line.groups()
+    tag = tag.strip()
+    start = parse_start_proc(line)
+    if start:
+      line_package, target, line_pid, line_uid, line_gids = start
+      if match_packages(line_package):
+        pids.add(line_pid)
+
+        app_pid = line_pid
+
+        linebuf  = '\n'
+        linebuf += colorize(' ' * (header_size - 1), bg=WHITE)
+        linebuf += indent_wrap(' Process %s created for %s\n' % (line_package, target))
+        linebuf += colorize(' ' * (header_size - 1), bg=WHITE)
+        linebuf += ' PID: %s   UID: %s   GIDs: %s' % (line_pid, line_uid, line_gids)
+        linebuf += '\n'
+        print(linebuf)
+        last_tag = None # Ensure next log gets a tag printed
+
+    dead_pid, dead_pname = parse_death(tag, message)
+    if dead_pid:
+      pids.remove(dead_pid)
       linebuf  = '\n'
-      linebuf += colorize(' ' * (header_size - 1), bg=WHITE)
-      linebuf += indent_wrap(' Process %s created for %s\n' % (line_package, target))
-      linebuf += colorize(' ' * (header_size - 1), bg=WHITE)
-      linebuf += ' PID: %s   UID: %s   GIDs: %s' % (line_pid, line_uid, line_gids)
+      linebuf += colorize(' ' * (header_size - 1), bg=RED)
+      linebuf += ' Process %s (PID: %s) ended' % (dead_pname, dead_pid)
       linebuf += '\n'
       print(linebuf)
       last_tag = None # Ensure next log gets a tag printed
 
-  dead_pid, dead_pname = parse_death(tag, message)
-  if dead_pid:
-    pids.remove(dead_pid)
-    linebuf  = '\n'
-    linebuf += colorize(' ' * (header_size - 1), bg=RED)
-    linebuf += ' Process %s (PID: %s) ended' % (dead_pname, dead_pid)
-    linebuf += '\n'
-    print(linebuf)
-    last_tag = None # Ensure next log gets a tag printed
+    # Make sure the backtrace is printed after a native crash
+    if tag == 'DEBUG':
+      bt_line = BACKTRACE_LINE.match(message.lstrip())
+      if bt_line is not None:
+        message = message.lstrip()
+        owner = app_pid
 
-  # Make sure the backtrace is printed after a native crash
-  if tag == 'DEBUG':
-    bt_line = BACKTRACE_LINE.match(message.lstrip())
-    if bt_line is not None:
-      message = message.lstrip()
-      owner = app_pid
+    if owner not in pids:
+      continue
+    if level in LOG_LEVELS_MAP and LOG_LEVELS_MAP[level] < min_level:
+      continue
+    if args.ignored_tag and tag_in_tags_regex(tag, args.ignored_tag):
+      continue
+    if args.tag and not tag_in_tags_regex(tag, args.tag):
+      continue
 
-  if owner not in pids:
-    continue
-  if level in LOG_LEVELS_MAP and LOG_LEVELS_MAP[level] < min_level:
-    continue
-  if args.ignored_tag and tag_in_tags_regex(tag, args.ignored_tag):
-    continue
-  if args.tag and not tag_in_tags_regex(tag, args.tag):
-    continue
+    linebuf = ''
 
-  linebuf = ''
+    # right-align tag title and allocate color if needed
+    if tag != last_tag or args.always_tags:
+      last_tag = tag
+      color = allocate_color(tag)
+      tag = tag[-args.tag_width:].rjust(args.tag_width)
+      if args.timestamp:
+        linebuf += datetime.datetime.now().strftime(" %H:%M:%S.%f")
+      linebuf += colorize(tag, fg=color)
+    else:
+      if args.timestamp:
+        linebuf += datetime.datetime.now().strftime(" %H:%M:%S.%f")
+      linebuf += ' ' * args.tag_width
+    linebuf += ' '
 
-  # right-align tag title and allocate color if needed
-  if tag != last_tag or args.always_tags:
-    last_tag = tag
-    color = allocate_color(tag)
-    tag = tag[-args.tag_width:].rjust(args.tag_width)
-    linebuf += colorize(tag, fg=color)
-  else:
-    linebuf += ' ' * args.tag_width
-  linebuf += ' '
+    # write out level colored edge
+    if level in TAGTYPES:
+      linebuf += TAGTYPES[level]
+    else:
+      linebuf += ' ' + level + ' '
+    linebuf += ' '
 
-  # write out level colored edge
-  if level in TAGTYPES:
-    linebuf += TAGTYPES[level]
-  else:
-    linebuf += ' ' + level + ' '
-  linebuf += ' '
+    # format tag message using rules
+    for matcher in RULES:
+      replace = RULES[matcher]
+      message = matcher.sub(replace, message)
 
-  # format tag message using rules
-  for matcher in RULES:
-    replace = RULES[matcher]
-    message = matcher.sub(replace, message)
+    linebuf += indent_wrap(message)
+    print(linebuf.encode('utf-8'))
 
-  linebuf += indent_wrap(message)
-  print(linebuf.encode('utf-8'))
+
+re_device = re.compile("^(.*)\tdevice$",re.MULTILINE)
+def check_for_device_and_start():
+  choosen_device = ""
+  raw_devices = []
+  retries = 100
+  while retries > 0:
+    try:
+      res = os.popen('adb devices').read()
+      raw_devices = re_device.findall(res)
+      if 'List of devices attached' in res and len(raw_devices) > 0:
+        if choosen_device in raw_devices:
+          print "\nOutputing logcat for device: " + choosen_device + "\n"
+          logcat(choosen_device)
+          choosen_device = ""
+        else:
+          print "\nList of devices attached:"
+          for i, d in enumerate(raw_devices):
+            # res = os.popen('adb -s ' + d + ' shell cat /system/build.prop | grep "ro.product.model"').read()
+            # if res:
+            #   print str(i+1) + ": " + str(d) + " - " + res.split("=")[1].strip()
+            # else:
+            print str(i+1) + ": " + str(d)
+
+          while True:
+            try:
+              choice = raw_input("\nPlease select the device: ")
+            except KeyboardInterrupt:
+              sys.exit()
+
+            if re.compile("\d").match(choice):
+              #is number
+              if (int(choice) -1) < len(raw_devices):
+                choosen_device = raw_devices[int(choice) -1]
+                break
+
+
+      else:
+        print "\nCurrently no device is connected, will retry in few seconds"
+        time.sleep(5)
+        retries -= 1
+        continue
+    except KeyboardInterrupt:
+      sys.exit()
+
+if __name__ == "__main__":
+  check_for_device_and_start()
